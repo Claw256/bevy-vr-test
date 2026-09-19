@@ -30,7 +30,7 @@ ordinary desktop window if not — so you can work on it either way.
 
 - `W` `A` `S` `D`, `Q` `E` — move; hold `Shift` to go faster
 - Hold right mouse button — look around
-- `F3` — toggle the FPS readout and frame-time graph
+- `Esc` — open the settings menu (frame stats, v-sync, display mode)
 
 ## Running it
 
@@ -147,22 +147,36 @@ app.insert_resource(RenderQuality {
 });
 ```
 
-### Watching frame times in the app
+### The settings menu
 
-`F3` toggles Bevy's frame-time overlay — current FPS plus a rolling graph of
-recent frames. It is bound only in flat desktop mode, for the same reason the
-fly controls are: in the headset it would be competing with the runtime, and
-Bevy's `Node` UI does not reach the XR cameras anyway.
+`Esc` opens a settings menu (`src/plugins/settings.rs`). Click a row to cycle it:
 
-The graph is coloured against **headset** cadence rather than monitor cadence —
-red below 72 fps, green above 90 — because the useful question while working
-flat is whether the frame would survive in a headset. Change it via
+| Row | Options |
+| --- | --- |
+| Frame stats | Hidden / Shown — FPS readout plus a rolling frame-time graph |
+| V-Sync | On (auto), Off (auto), On – Fifo, Adaptive – Fifo relaxed, Off – Mailbox, Off – Immediate |
+| Display | Windowed, Borderless fullscreen, Exclusive fullscreen |
+
+It is bound only in flat desktop mode, for the same reason the fly controls
+are: Bevy's `Node` UI draws to the window camera and never reaches the XR eye
+cameras, so in a headset the menu would be invisible while still eating clicks
+and keys. The fly controls yield while the menu is open, so clicking a row does
+not also fly the camera.
+
+Every present mode is safe to pick. `bevy_render`'s `present_mode` chooses the
+closest supported option and always ends at `Fifo`, logging when it substitutes
+— so on a driver without Mailbox, that row still works, it just quietly gets
+something else.
+
+The frame-time graph is coloured against **headset** cadence rather than monitor
+cadence — red below 72 fps, green above 90 — because the useful question while
+working flat is whether the frame would survive in a headset. Change it via
 `FpsOverlayConfig` if you want monitor thresholds.
 
-This needs Bevy's `bevy_dev_tools` feature, which `Cargo.toml` enables. It is
-not a default feature; drop it for a shipping build if you would rather not
-compile the dev tooling in. The overlay starts hidden, so it costs nothing until
-you press the key.
+The overlay needs Bevy's `bevy_dev_tools` feature, which `Cargo.toml` enables.
+It is not a default feature; drop it for a shipping build if you would rather
+not compile the dev tooling in. The overlay starts hidden, so it costs nothing
+until you switch it on.
 
 ### Read these numbers carefully
 

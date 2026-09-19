@@ -1,1 +1,4 @@
 /target
+
+# rustc crash dumps (this toolchain SIGSEGVs intermittently; see README)
+rustc-ice-*.txt

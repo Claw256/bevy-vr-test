@@ -139,7 +139,8 @@ fn spawn_overlay(mut commands: Commands) {
         Node {
             position_type: PositionType::Absolute,
             left: Val::Px(16.0),
-            top: Val::Px(16.0),
+            // Bottom-left: the FPS overlay and its graph own the top-left.
+            bottom: Val::Px(16.0),
             padding: UiRect::all(Val::Px(12.0)),
             ..default()
         },
@@ -147,7 +148,7 @@ fn spawn_overlay(mut commands: Commands) {
         children![(
             Text::new(
                 "VR: left stick moves - right stick snap-turns - squeeze to grab\n\
-                 Desktop: WASD/QE moves - hold right mouse to look - F3 for frame times",
+                 Desktop: WASD/QE moves - hold right mouse to look - Esc for settings",
             ),
             TextFont {
                 font_size: FontSize::Px(15.0),

@@ -5,5 +5,6 @@ pub mod desktop;
 pub mod interaction;
 pub mod locomotion;
 pub mod quality;
+pub mod settings;
 pub mod world;
 pub mod xr_input;

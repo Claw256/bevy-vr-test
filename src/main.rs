@@ -18,6 +18,7 @@ use plugins::desktop::DesktopPlugin;
 use plugins::interaction::InteractionPlugin;
 use plugins::locomotion::LocomotionPlugin;
 use plugins::quality::RenderQualityPlugin;
+use plugins::settings::SettingsMenuPlugin;
 use plugins::world::WorldPlugin;
 use plugins::xr_input::XrInputPlugin;
 use sets::VrSet;
@@ -56,6 +57,7 @@ fn main() -> AppExit {
             RenderQualityPlugin,
             WorldPlugin,
             DesktopPlugin,
+            SettingsMenuPlugin,
             XrInputPlugin,
             ControllersPlugin,
             LocomotionPlugin,
