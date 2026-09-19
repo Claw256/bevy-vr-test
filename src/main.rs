@@ -17,6 +17,7 @@ use plugins::controllers::ControllersPlugin;
 use plugins::desktop::DesktopPlugin;
 use plugins::interaction::InteractionPlugin;
 use plugins::locomotion::LocomotionPlugin;
+use plugins::pacing::FramePacePlugin;
 use plugins::physics::GamePhysicsPlugin;
 use plugins::quality::RenderQualityPlugin;
 use plugins::settings::SettingsMenuPlugin;
@@ -56,6 +57,7 @@ fn main() -> AppExit {
         )
         .add_plugins((
             RenderQualityPlugin,
+            FramePacePlugin,
             GamePhysicsPlugin,
             WorldPlugin,
             DesktopPlugin,

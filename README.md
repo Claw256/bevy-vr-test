@@ -16,6 +16,7 @@ ordinary desktop window if not — so you can work on it either way.
 | Grab, carry and throw props, with haptic feedback | `src/plugins/interaction.rs` |
 | Physics: Avian bodies and colliders | `src/plugins/physics.rs`, `world.rs` |
 | Settings menu: VR/desktop, frame stats, v-sync, display mode | `src/plugins/settings.rs` |
+| Frame pacing (fixes stutter on the flat screen) | `src/plugins/pacing.rs` |
 | Scene, props and the on-screen help overlay | `src/plugins/world.rs` |
 | Desktop mirror camera and fly controls | `src/plugins/desktop.rs` |
 | Hand-tracking skeleton gizmos | `HandGizmosPlugin`, registered in `main.rs` |
@@ -151,6 +152,43 @@ app.insert_resource(RenderQuality {
     shadow_map_size: 2048,
 });
 ```
+
+### Frame pacing
+
+Left to itself the app free-runs: ~2 ms of CPU work per frame, queue it, render
+another, and eventually block because the presentation path will take no more.
+That produced a strongly **bimodal** frame time — most frames near 6.3 ms, about
+one in five near 16.8 ms — averaging out to the display's refresh interval but
+arriving unevenly. An even average rate with uneven spacing *is* stutter, and
+since Bevy drives motion from `Time::delta`, it goes straight into the animation.
+
+`FramePacePlugin` sleeps each frame until an absolute deadline that advances by
+exactly one interval. Measured on this project (debug build, GTX 960M, 119.93 Hz
+display, 900 frames, two runs each):
+
+| | p50 | p90 | frames over 15 ms | stdev |
+| --- | --- | --- | --- | --- |
+| `FramePace::Off` | 6.47 ms | 16.85 ms | 180, 182 | 4.3, 4.5 ms |
+| `FramePace::Auto` | 8.34 ms | 9.2 ms | **4, 8** | **1.0, 1.3 ms** |
+
+It defaults to `Auto`, which adopts the primary monitor's refresh rate at
+startup, and it is disabled inside a VR session, because the runtime paces the
+loop through `xrWaitFrame` and a second limiter would only fight it.
+
+```rust
+app.insert_resource(FramePace::Hz(72.0));  // or ::Off to run unpaced
+```
+
+Turning v-sync off in the settings menu *and* leaving pacing on was the
+smoothest combination measured (stdev 0.78 ms, zero frames over 15 ms), at the
+cost of possible tearing.
+
+**What was not the cause**, each ruled out by measurement rather than argument:
+the physics step costs 0.55 ms; the app's whole `First..Last` CPU work is ~2 ms
+on fast and slow frames alike; and pipelined rendering, present mode, swapchain
+queue depth (`desired_maximum_frame_latency`) and windowed-vs-fullscreen all
+left the distribution unchanged. The gap between a 6 ms frame and a 17 ms one
+was entirely time blocked outside the schedule.
 
 ### The settings menu
 
