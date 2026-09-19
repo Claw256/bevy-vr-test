@@ -7,6 +7,7 @@
 use bevy::prelude::*;
 
 use crate::components::interaction::{Grabbable, GrabbableMaterials};
+use crate::plugins::quality::RenderQuality;
 
 /// Height of the table surface, in metres.
 const TABLE_HEIGHT: f32 = 0.75;
@@ -25,6 +26,7 @@ impl Plugin for WorldPlugin {
 }
 
 fn spawn_environment(
+    quality: Res<RenderQuality>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -46,6 +48,9 @@ fn spawn_environment(
             shadow_maps_enabled: true,
             ..default()
         },
+        // Bevy's default cascade layout spans 150 m; this scene is 12 m
+        // across. See `plugins::quality` for the measurement.
+        quality.cascades(),
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 

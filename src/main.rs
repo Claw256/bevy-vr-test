@@ -17,12 +17,15 @@ use plugins::controllers::ControllersPlugin;
 use plugins::desktop::DesktopPlugin;
 use plugins::interaction::InteractionPlugin;
 use plugins::locomotion::LocomotionPlugin;
+use plugins::quality::RenderQualityPlugin;
 use plugins::world::WorldPlugin;
 use plugins::xr_input::XrInputPlugin;
 use sets::VrSet;
 
 fn main() -> AppExit {
-    App::new()
+    let mut app = App::new();
+
+    app
         .add_plugins(add_xr_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
@@ -45,20 +48,26 @@ fn main() -> AppExit {
             focused_mode: UpdateMode::Continuous,
             unfocused_mode: UpdateMode::Continuous,
         })
-        // Draws the tracked hand skeleton when the runtime reports hand joints.
-        .add_plugins(bevy_mod_xr::hand_debug_gizmos::HandGizmosPlugin)
         .configure_sets(
             Update,
             (VrSet::Locomotion, VrSet::Interaction, VrSet::Feedback).chain(),
         )
         .add_plugins((
+            RenderQualityPlugin,
             WorldPlugin,
             DesktopPlugin,
             XrInputPlugin,
             ControllersPlugin,
             LocomotionPlugin,
             InteractionPlugin,
-        ))
-        .run()
+        ));
+
+    // Debug instrumentation: redraws 26 joints per hand every frame. Dev builds
+    // only — it is not worth the cost in a shipping VR frame.
+    if cfg!(debug_assertions) {
+        app.add_plugins(bevy_mod_xr::hand_debug_gizmos::HandGizmosPlugin);
+    }
+
+    app.run()
 }
 

@@ -100,6 +100,97 @@ Note that suggesting bindings only works *before* the action set is attached to
 the session, which is why all of this happens in `Startup` and
 `OxrSendActionBindings` rather than on demand.
 
+## Performance
+
+The two Bevy defaults that cost the most in this app, and what replaced them,
+live in `src/plugins/quality.rs`.
+
+**MSAA.** `bevy_render` calls `register_required_components::<Camera, Msaa>()`,
+and the OpenXR backend spawns its eye cameras without an `Msaa` of their own
+(`bevy_mod_openxr/src/openxr/render.rs`), so both eyes silently get
+`Msaa::Sample4`. The XR swapchain is created with `sample_count: 1`, so that 4x
+buffer is resolved straight back down — paid at full headset resolution, twice,
+for nothing.
+
+**Shadow cascades.** Bevy defaults to 4 cascades over 150 m at 2048px each.
+Everything in this scene sits inside a 12 m circle, so three of those cascades
+cover empty ground and the one that matters is stretched over 150 m of it. One
+cascade over 30 m is both cheaper *and* sharper, since the same 2048px covers
+far less ground.
+
+Measured with `examples/perf_probe.rs`, release build, 1920x1080, one view,
+500 frames after a 120-frame warmup:
+
+| Configuration | p50 frame time |
+| --- | --- |
+| Bevy defaults (MSAA 4, 4 cascades / 150 m) | 22.4 ms |
+| MSAA off only | 21.1 ms |
+| 1 cascade / 30 m only | 19.5 ms |
+| **Both — the current defaults** | **18.1 ms** (-19%) |
+| Shadows off entirely | 11.1 ms (-50%) |
+
+Shadows are the single largest cost: ~9.8 ms of the 22.4 ms baseline, and most
+of that is per-fragment shadow sampling in the main pass, not the shadow pass
+itself — dropping the shadow map from 2048px to 1024px changed nothing
+measurable. If you need more headroom than the settings above give you, turning
+shadows off is the next big lever, at a real cost to depth perception in VR.
+
+Tune it through the `RenderQuality` resource, inserted before the plugins:
+
+```rust
+app.insert_resource(RenderQuality {
+    msaa: Msaa::Off,
+    shadow_cascades: 1,
+    shadow_distance: 30.0,
+    shadow_map_size: 2048,
+});
+```
+
+### Read these numbers carefully
+
+They were measured on an Intel HD Graphics 530 integrated GPU, rendering **one**
+1920x1080 view, with **no headset attached**. A VR frame is two views at roughly
+twice that resolution each, on a very different GPU. The *ranking* of the levers
+should carry over, because both MSAA and shadow sampling scale with pixels times
+views. The *magnitudes* will not. Re-measure on your target hardware.
+
+The probe renders to a window by default, which is clamped to your display size
+— `PROBE_RES` above the monitor resolution is silently capped. `PROBE_OFFSCREEN=1`
+renders to an image instead and lifts that cap, but off-screen removes present
+backpressure, so the CPU runs ahead of the GPU and the frame deltas stop meaning
+anything. Prefer the window path.
+
+```bash
+PROBE_RES=1920x1080 PROBE_MSAA=off PROBE_CASCADES=1 PROBE_MAXDIST=30 \
+  cargo run --release --example perf_probe
+```
+
+### The other VR lever: resolution scale
+
+Not measurable here, but on real hardware it is usually the biggest dial of all,
+because it multiplies every per-fragment cost above. `bevy_mod_openxr` picks the
+runtime's recommended per-eye resolution unless you name one, and it accepts any
+size up to the runtime's maximum. Set it *before* `add_xr_plugins`, since the
+swapchain is built during plugin construction:
+
+```rust
+app.insert_resource(OxrSessionConfig {
+    resolutions: Some(vec![UVec2::new(1600, 1600)]),
+    ..default()
+});
+```
+
+The backend logs `XrCamera resolution: ...` at startup — start from that number
+and scale it down.
+
+### Two more knobs
+
+- **Hand gizmos** redraw 26 joints per hand every frame. `main.rs` now registers
+  `HandGizmosPlugin` only under `cfg!(debug_assertions)`.
+- **Pipelined rendering** is disabled in `main.rs` on purpose: it buys throughput
+  by adding a frame of latency, which you feel in a headset. If you end up
+  CPU-bound rather than fill-bound, re-enabling it is the trade to reconsider.
+
 ## Known limits
 
 - **No physics.** A released prop stays where it was let go. Add
