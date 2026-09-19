@@ -4,6 +4,7 @@
 //! body to compare against, and a table at the wrong height reads as wrong
 //! immediately.
 
+use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::components::interaction::{Grabbable, GrabbableMaterials};
@@ -31,14 +32,19 @@ fn spawn_environment(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // A slab rather than a plane, so the mesh and the collider are the same
+    // shape. Sunk by half its depth to put the walking surface at y = 0.
     commands.spawn((
         Name::new("Floor"),
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(30.0, 30.0))),
+        Mesh3d(meshes.add(Cuboid::new(30.0, 0.2, 30.0))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.32, 0.34, 0.38),
             perceptual_roughness: 0.9,
             ..default()
         })),
+        Transform::from_xyz(0.0, -0.1, 0.0),
+        RigidBody::Static,
+        Collider::cuboid(30.0, 0.2, 30.0),
     ));
 
     commands.spawn((
@@ -69,6 +75,8 @@ fn spawn_environment(
             Mesh3d(pillar.clone()),
             MeshMaterial3d(pillar_material.clone()),
             Transform::from_xyz(angle.cos() * 6.0, 1.5, angle.sin() * 6.0),
+            RigidBody::Static,
+            Collider::cuboid(0.4, 3.0, 0.4),
         ));
     }
 }
@@ -87,6 +95,8 @@ fn spawn_props(
             ..default()
         })),
         Transform::from_xyz(0.0, TABLE_HEIGHT, -0.6),
+        RigidBody::Static,
+        Collider::cuboid(1.2, 0.05, 0.7),
     ));
 
     let cube = meshes.add(Cuboid::from_length(0.09));
@@ -126,6 +136,12 @@ fn spawn_props(
             },
             Grabbable::default(),
             Transform::from_xyz(x, TABLE_HEIGHT + 0.08, -0.6),
+            RigidBody::Dynamic,
+            if round {
+                Collider::sphere(0.055)
+            } else {
+                Collider::cuboid(0.09, 0.09, 0.09)
+            },
         ));
     }
 }
@@ -148,7 +164,8 @@ fn spawn_overlay(mut commands: Commands) {
         children![(
             Text::new(
                 "VR: left stick moves - right stick snap-turns - squeeze to grab\n\
-                 Desktop: WASD/QE moves - hold right mouse to look - Esc for settings",
+                 Desktop: WASD/QE moves - right mouse looks - left click grabs\n\
+                 Esc for settings (VR/desktop, frame stats, v-sync, display)",
             ),
             TextFont {
                 font_size: FontSize::Px(15.0),

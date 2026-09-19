@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+avian3d = "0.7"
 # `bevy_dev_tools` is not a default feature; it provides the frame-time
 # overlay bound to F3. Drop it for a shipping build if you do not want the
 # dev tooling compiled in.

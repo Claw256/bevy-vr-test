@@ -7,7 +7,7 @@
 
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
-use bevy_mod_xr::session::{XrState, state_equals};
+use bevy_mod_xr::session::session_running;
 
 use crate::plugins::settings::settings_menu_open;
 
@@ -18,7 +18,9 @@ impl Plugin for DesktopPlugin {
         app.add_systems(Startup, spawn_camera).add_systems(
             Update,
             fly_camera
-                .run_if(state_equals(XrState::Unavailable))
+                // Not "no runtime", but "not currently in a session" — so the
+                // controls come back when you switch out of VR at runtime.
+                .run_if(not(session_running))
                 // Yield to the settings menu, so clicking a row does not also
                 // fly the camera.
                 .run_if(not(settings_menu_open)),
@@ -28,7 +30,7 @@ impl Plugin for DesktopPlugin {
 
 /// Marks the flat camera so the fly controls do not grab an XR eye.
 #[derive(Component)]
-struct DesktopCamera;
+pub struct DesktopCamera;
 
 fn spawn_camera(mut commands: Commands) {
     commands.spawn((

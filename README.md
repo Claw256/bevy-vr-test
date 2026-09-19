@@ -13,7 +13,9 @@ ordinary desktop window if not — so you can work on it either way.
 | OpenXR action set, bound across five controller profiles | `src/plugins/xr_input.rs` |
 | Tracked controllers (grip pose → entity transform) | `src/plugins/controllers.rs` |
 | Smooth locomotion + snap turning on the tracking root | `src/plugins/locomotion.rs` |
-| Grab and release props, with haptic feedback | `src/plugins/interaction.rs` |
+| Grab, carry and throw props, with haptic feedback | `src/plugins/interaction.rs` |
+| Physics: Avian bodies and colliders | `src/plugins/physics.rs`, `world.rs` |
+| Settings menu: VR/desktop, frame stats, v-sync, display mode | `src/plugins/settings.rs` |
 | Scene, props and the on-screen help overlay | `src/plugins/world.rs` |
 | Desktop mirror camera and fly controls | `src/plugins/desktop.rs` |
 | Hand-tracking skeleton gizmos | `HandGizmosPlugin`, registered in `main.rs` |
@@ -24,13 +26,15 @@ ordinary desktop window if not — so you can work on it either way.
 
 - Left thumbstick — move, relative to where you are looking
 - Right thumbstick — snap turn 45°
-- Squeeze either grip — pick up a highlighted prop; let go to drop it
+- Squeeze either grip — pick up a highlighted prop; let go to drop, or throw it
+  by releasing while moving your hand
 
-**On the desktop** (only when no OpenXR runtime is found)
+**On the desktop** (whenever a VR session is not running)
 
 - `W` `A` `S` `D`, `Q` `E` — move; hold `Shift` to go faster
 - Hold right mouse button — look around
-- `Esc` — open the settings menu (frame stats, v-sync, display mode)
+- **Left click** — pick up the prop under the cursor; click again to drop it
+- `Esc` — open the settings menu
 
 ## Running it
 
@@ -153,15 +157,22 @@ app.insert_resource(RenderQuality {
 
 | Row | Options |
 | --- | --- |
+| Mode | Desktop / VR — starts or ends the OpenXR session at runtime |
 | Frame stats | Hidden / Shown — FPS readout plus a rolling frame-time graph |
 | V-Sync | On (auto), Off (auto), On – Fifo, Adaptive – Fifo relaxed, Off – Mailbox, Off – Immediate |
 | Display | Windowed, Borderless fullscreen, Exclusive fullscreen |
 
-It is bound only in flat desktop mode, for the same reason the fly controls
-are: Bevy's `Node` UI draws to the window camera and never reaches the XR eye
-cameras, so in a headset the menu would be invisible while still eating clicks
-and keys. The fly controls yield while the menu is open, so clicking a row does
-not also fly the camera.
+The menu stays available while a headset is running, because switching *out*
+of VR has to be reachable from somewhere — you drive it from the mirror window.
+It is not visible inside the headset: Bevy's `Node` UI draws to the window
+camera and never reaches the XR eye cameras. The fly controls yield while the
+menu is open, so clicking a row does not also fly the camera.
+
+Switching mode sends `XrCreateSessionMessage` to enter VR and
+`XrRequestExitMessage` to leave. Leaving is safe from an auto-restart loop:
+the backend reports `Exiting { should_restart: false }` and then re-inserts
+`XrState::Available` *without* an `XrStateChanged`, so `auto_handle_session`
+does not immediately recreate the session.
 
 Every present mode is safe to pick. `bevy_render`'s `present_mode` chooses the
 closest supported option and always ends at `Fifo`, logging when it substitutes
@@ -223,11 +234,31 @@ and scale it down.
   by adding a frame of latency, which you feel in a headset. If you end up
   CPU-bound rather than fill-bound, re-enabling it is the trade to reconsider.
 
+## Physics
+
+[Avian](https://github.com/avianphysics/avian) (`avian3d 0.7`, the release that
+targets Bevy 0.19). Floor, pillars and table are `RigidBody::Static`; the props
+are `RigidBody::Dynamic`.
+
+A held prop switches to `RigidBody::Kinematic` and is driven from the holder's
+pose each frame, rather than being parented to it. Parenting is what the
+pre-physics version did, and it stops working once a solver is in the world:
+the solver and the transform hierarchy would both be writing the same body.
+
+Carrying kinematically is also what makes throwing work. The carry system
+already knows how far the prop moved last frame, so releasing hands that
+velocity to the solver — clamped by `GrabTuning`, because tracking jitter can
+produce a single huge frame delta and fling a prop out of the room.
+
+One scheduling detail matters. Avian runs in `FixedPostUpdate`, which is
+*earlier* in the frame than `Update`. A `Position` written from `Update` would
+not reach `Transform` until the next fixed step, and fixed steps do not happen
+every frame — the prop would visibly stutter in your hand. So the carry system
+writes `Transform`, which renders correctly this frame; Avian's
+`transform_to_position` picks it up before the next step.
+
 ## Known limits
 
-- **No physics.** A released prop stays where it was let go. Add
-  [`avian3d`](https://crates.io/crates/avian3d) or `bevy_rapier3d` for throwing
-  and collisions — and match the version to Bevy 0.19.
 - **UI is flat only.** Bevy's `Node` UI draws to the window camera, so the help
   overlay is invisible in the headset. In-headset UI has to be world-space
   geometry parented to the tracking root.

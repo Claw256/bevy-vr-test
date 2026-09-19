@@ -1,19 +1,20 @@
-//! An in-app settings menu for flat desktop mode.
+//! The in-app settings menu.
 //!
-//! Opened with [`SETTINGS_KEY`]. It owns three things a flat-screen build wants
-//! to change without a restart: the frame-time overlay, the present mode
-//! (v-sync), and the window mode.
+//! Opened with [`SETTINGS_KEY`]. It owns what can be changed without a restart:
+//! whether the app is running in VR or on the flat screen, the frame-time
+//! overlay, the present mode (v-sync), and the window mode.
 //!
-//! Desktop-only, for the same reason the fly camera is: Bevy's `Node` UI draws
-//! to the window camera and never reaches the XR eye cameras, so in a headset
-//! this menu would be invisible while still eating clicks and keys.
+//! The menu is driven from the desktop window and stays available while a
+//! headset is running, because switching *out* of VR has to be reachable from
+//! somewhere. It is not visible inside the headset: Bevy's `Node` UI draws to
+//! the window camera and never reaches the XR eye cameras.
 
 use std::time::Duration;
 
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig};
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, VideoModeSelection, WindowMode};
-use bevy_mod_xr::session::{XrState, state_equals};
+use bevy_mod_xr::session::{XrCreateSessionMessage, XrRequestExitMessage, XrState};
 
 /// Opens and closes the settings menu.
 pub const SETTINGS_KEY: KeyCode = KeyCode::Escape;
@@ -60,8 +61,7 @@ impl Plugin for SettingsMenuPlugin {
                     apply_video_settings,
                     refresh_labels,
                 )
-                    .chain()
-                    .run_if(state_equals(XrState::Unavailable)),
+                    .chain(),
             );
     }
 }
@@ -153,6 +153,18 @@ const PRESENT_MODES: [(PresentMode, &str); 6] = [
     (PresentMode::Immediate, "Off - Immediate"),
 ];
 
+/// What the Mode row reads, given the current session state.
+fn mode_label(state: Option<&XrState>) -> &'static str {
+    match state {
+        None | Some(XrState::Unavailable) => "Desktop (no VR runtime)",
+        Some(XrState::Available) => "Desktop",
+        Some(XrState::Running) => "VR",
+        // Idle, Ready, Stopping, Exiting: a session exists but is not, or is no
+        // longer, presenting.
+        Some(_) => "VR (switching)",
+    }
+}
+
 fn present_mode_label(mode: PresentMode) -> &'static str {
     PRESENT_MODES
         .iter()
@@ -177,6 +189,7 @@ struct SettingsPanel;
 /// Which setting a clickable row edits.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 enum SettingRow {
+    Mode,
     FrameStats,
     VSync,
     Display,
@@ -185,6 +198,7 @@ enum SettingRow {
 impl SettingRow {
     fn name(self) -> &'static str {
         match self {
+            Self::Mode => "Mode",
             Self::FrameStats => "Frame stats",
             Self::VSync => "V-Sync",
             Self::Display => "Display",
@@ -217,7 +231,7 @@ fn spawn_menu(mut commands: Commands) {
         GlobalZIndex(50),
         children![(
         Node {
-            width: Val::Px(340.0),
+            width: Val::Px(430.0),
             flex_direction: FlexDirection::Column,
             padding: UiRect::all(Val::Px(14.0)),
             row_gap: Val::Px(8.0),
@@ -233,6 +247,7 @@ fn spawn_menu(mut commands: Commands) {
                 },
                 TextColor(Color::WHITE),
             ),
+            setting_row(SettingRow::Mode),
             setting_row(SettingRow::FrameStats),
             setting_row(SettingRow::VSync),
             setting_row(SettingRow::Display),
@@ -292,14 +307,31 @@ fn toggle_menu(
 
 fn cycle_on_click(
     rows: Query<(&Interaction, &SettingRow), Changed<Interaction>>,
+    xr: Option<Res<XrState>>,
     mut settings: ResMut<VideoSettings>,
     mut overlay: ResMut<FpsOverlayConfig>,
+    mut enter_vr: MessageWriter<XrCreateSessionMessage>,
+    mut leave_vr: MessageWriter<XrRequestExitMessage>,
 ) {
     for (interaction, row) in &rows {
         if *interaction != Interaction::Pressed {
             continue;
         }
         match row {
+            // Creating a session needs the runtime idle and waiting; leaving
+            // one is only a request, and the backend walks the session through
+            // Stopping, Exiting and Destroyed on its own.
+            SettingRow::Mode => match xr.as_deref() {
+                None | Some(XrState::Unavailable) => {
+                    info!("no OpenXR runtime available, staying on the flat screen");
+                }
+                Some(XrState::Available) => {
+                    enter_vr.write_default();
+                }
+                Some(_) => {
+                    leave_vr.write_default();
+                }
+            },
             // Both flags have to move: Bevy drives the graph's visibility from
             // `frame_time_graph_config.enabled` alone, so flipping only the
             // outer one would hide the number and leave the graph on screen.
@@ -347,13 +379,16 @@ fn apply_video_settings(
 fn refresh_labels(
     settings: Res<VideoSettings>,
     overlay: Res<FpsOverlayConfig>,
+    xr: Option<Res<XrState>>,
     mut labels: Query<(&RowLabel, &mut Text)>,
 ) {
-    if !settings.is_changed() && !overlay.is_changed() {
+    let xr_changed = xr.as_ref().is_some_and(|state| state.is_changed());
+    if !settings.is_changed() && !overlay.is_changed() && !xr_changed {
         return;
     }
     for (label, mut text) in &mut labels {
         let value = match label.0 {
+            SettingRow::Mode => mode_label(xr.as_deref()),
             SettingRow::FrameStats => {
                 if overlay.enabled {
                     "Shown"
@@ -378,6 +413,10 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<VideoSettings>()
             .init_resource::<SettingsMenu>()
+            // cycle_on_click writes these; without registration its
+            // MessageWriter params fail validation and the system panics.
+            .add_message::<XrCreateSessionMessage>()
+            .add_message::<XrRequestExitMessage>()
             .insert_resource(FpsOverlayConfig {
                 enabled: false,
                 frame_time_graph_config: FrameTimeGraphConfig {
@@ -503,6 +542,56 @@ mod tests {
         for (mode, label) in PRESENT_MODES {
             assert_eq!(present_mode_label(mode), label);
         }
+    }
+
+    /// How many messages of this type were written, draining them.
+    fn written<M: Message>(app: &mut App) -> usize {
+        app.world_mut().resource_mut::<Messages<M>>().drain().count()
+    }
+
+    fn app_in_state(state: XrState) -> App {
+        let mut app = test_app();
+        app.insert_resource(state);
+        app
+    }
+
+    #[test]
+    fn mode_row_enters_vr_when_a_session_is_available() {
+        let mut app = app_in_state(XrState::Available);
+        click(&mut app, SettingRow::Mode);
+
+        assert_eq!(written::<XrCreateSessionMessage>(&mut app), 1);
+        assert_eq!(written::<XrRequestExitMessage>(&mut app), 0);
+    }
+
+    #[test]
+    fn mode_row_leaves_vr_while_a_session_runs() {
+        let mut app = app_in_state(XrState::Running);
+        click(&mut app, SettingRow::Mode);
+
+        assert_eq!(written::<XrRequestExitMessage>(&mut app), 1);
+        assert_eq!(written::<XrCreateSessionMessage>(&mut app), 0);
+    }
+
+    #[test]
+    fn mode_row_does_nothing_without_a_runtime() {
+        let mut app = app_in_state(XrState::Unavailable);
+        click(&mut app, SettingRow::Mode);
+
+        assert_eq!(written::<XrCreateSessionMessage>(&mut app), 0);
+        assert_eq!(written::<XrRequestExitMessage>(&mut app), 0);
+    }
+
+    #[test]
+    fn mode_row_reads_the_session_state() {
+        assert_eq!(mode_label(None), "Desktop (no VR runtime)");
+        assert_eq!(
+            mode_label(Some(&XrState::Unavailable)),
+            "Desktop (no VR runtime)"
+        );
+        assert_eq!(mode_label(Some(&XrState::Available)), "Desktop");
+        assert_eq!(mode_label(Some(&XrState::Running)), "VR");
+        assert_eq!(mode_label(Some(&XrState::Ready)), "VR (switching)");
     }
 
     #[test]
