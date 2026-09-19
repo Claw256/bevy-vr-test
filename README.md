@@ -33,7 +33,8 @@ ordinary desktop window if not — so you can work on it either way.
 
 - `W` `A` `S` `D`, `Q` `E` — move; hold `Shift` to go faster
 - Hold right mouse button — look around
-- **Left click** — pick up the prop under the cursor; click again to drop it
+- **Left click** — pick up the prop under the cursor. It then rides the cursor
+  ray, so the *mouse* moves it and throws it; click again to let go
 - `Esc` — open the settings menu
 
 ## Running it
@@ -240,10 +241,22 @@ and scale it down.
 targets Bevy 0.19). Floor, pillars and table are `RigidBody::Static`; the props
 are `RigidBody::Dynamic`.
 
-A held prop switches to `RigidBody::Kinematic` and is driven from the holder's
-pose each frame, rather than being parented to it. Parenting is what the
-pre-physics version did, and it stops working once a solver is in the world:
-the solver and the transform hierarchy would both be writing the same body.
+A held prop switches to `RigidBody::Kinematic` and is driven each frame,
+rather than being parented to its holder. Parenting is what the pre-physics
+version did, and it stops working once a solver is in the world: the solver and
+the transform hierarchy would both be writing the same body.
+
+`Carry` has two modes, and both follow the **input device** rather than the
+player:
+
+- `Carry::Holder` — VR. Locked to the controller's pose, so the prop tracks
+  your hand.
+- `Carry::Cursor` — desktop. The prop floats on the cursor ray at the distance
+  it was grabbed from, so the *mouse* moves and throws it.
+
+Carrying relative to the camera instead welds the prop to the view: it can then
+only be moved by walking, and only be thrown by moving the player. That was the
+desktop behaviour before, and it is what `Carry::Cursor` exists to avoid.
 
 Carrying kinematically is also what makes throwing work. The carry system
 already knows how far the prop moved last frame, so releasing hands that

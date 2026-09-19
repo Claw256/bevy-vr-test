@@ -164,7 +164,8 @@ fn spawn_overlay(mut commands: Commands) {
         children![(
             Text::new(
                 "VR: left stick moves - right stick snap-turns - squeeze to grab\n\
-                 Desktop: WASD/QE moves - right mouse looks - left click grabs\n\
+                 Desktop: WASD/QE moves - right mouse looks - left click grabs,\n\
+                 then the mouse moves and throws it\n\
                  Esc for settings (VR/desktop, frame stats, v-sync, display)",
             ),
             TextFont {
