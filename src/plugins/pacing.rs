@@ -38,6 +38,7 @@ pub struct FramePacePlugin;
 impl Plugin for FramePacePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FramePace>()
+            .init_resource::<PaceTuning>()
             .add_systems(PostStartup, adopt_monitor_refresh)
             .add_systems(
                 Last,
@@ -106,45 +107,101 @@ fn adopt_monitor_refresh(
     };
 }
 
-fn hold_the_frame(pace: Res<FramePace>, mut deadline: Local<Option<Instant>>) {
+/// State the limiter carries between frames.
+#[derive(Default)]
+struct Pacer {
+    deadline: Option<Instant>,
+    /// How late `thread::sleep` has been returning lately.
+    ///
+    /// The kernel wakes us when it feels like it, and under load that can be
+    /// several milliseconds — most of a 120 Hz frame. This is what the last of
+    /// the spikes were: measured over 2000 frames, the overshooting frames had
+    /// ~2 ms of CPU work and no physics step, so the app was not running long,
+    /// the sleep was coming back late.
+    overshoot: Duration,
+}
+
+/// How much CPU the limiter may burn to hit its deadline.
+///
+/// Sleeping is cheap but imprecise; spinning is exact but burns a core. The
+/// window between these two bounds is what the limiter is allowed to spin.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct PaceTuning {
+    /// Always spin at least this long. Sub-millisecond wakeups are not reliable
+    /// on a desktop kernel; a 600 us floor measured worse than the fixed 1.2 ms
+    /// it replaced.
+    pub min_spin: Duration,
+    /// Never spin longer than this, however late the scheduler runs. On a
+    /// laptop a busy core is heat and battery.
+    pub max_spin: Duration,
+}
+
+impl Default for PaceTuning {
+    fn default() -> Self {
+        Self {
+            min_spin: Duration::from_micros(1500),
+            max_spin: Duration::from_micros(4000),
+        }
+    }
+}
+
+impl Pacer {
+    fn margin(&self, tuning: &PaceTuning) -> Duration {
+        self.overshoot.clamp(tuning.min_spin, tuning.max_spin)
+    }
+
+    /// Sleep until `deadline`, then spin out the remainder.
+    ///
+    /// The spin window tracks observed overshoot, growing the moment a wakeup
+    /// is late and decaying while they are punctual, so a quiet machine barely
+    /// spins and a busy one still makes its deadline.
+    fn sleep_until(&mut self, deadline: Instant, tuning: &PaceTuning) {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return;
+        };
+
+        if let Some(coarse) = remaining.checked_sub(self.margin(tuning)) {
+            let before = Instant::now();
+            std::thread::sleep(coarse);
+            let late = before.elapsed().saturating_sub(coarse);
+
+            // Decaying maximum: jump to a late wakeup at once, forget it
+            // slowly. A mean would sit under most overshoots and keep missing;
+            // a plain maximum would never come back down after one bad frame.
+            self.overshoot = late.max(self.overshoot.mul_f32(0.98));
+        }
+
+        while Instant::now() < deadline {
+            std::hint::spin_loop();
+        }
+    }
+}
+
+fn hold_the_frame(
+    pace: Res<FramePace>,
+    tuning: Res<PaceTuning>,
+    mut pacer: Local<Pacer>,
+) {
     let Some(interval) = pace.interval() else {
-        *deadline = None;
+        pacer.deadline = None;
         return;
     };
 
     let now = Instant::now();
-    let next = match *deadline {
-        // More than a whole interval behind — a hitch, a breakpoint, or the
-        // rate just changed. Resync rather than catching up through a burst of
-        // zero-length frames.
+    let next = match pacer.deadline {
         Some(previous) if previous + interval >= now => previous + interval,
+        // Behind: restart from now, so the next frame gets a whole interval of
+        // slack. The tidier-looking alternative — skipping whole intervals to
+        // preserve phase — measured far worse, 163 spikes per 2000 frames
+        // against 2, because it hands the next frame whatever fraction of an
+        // interval happens to be left instead of a clean one.
         _ => {
-            *deadline = Some(now);
+            pacer.deadline = Some(now);
             return;
         }
     };
-    *deadline = Some(next);
-
-    if let Some(remaining) = next.checked_duration_since(now) {
-        spin_sleep(remaining);
-    }
-}
-
-/// Sleep most of the way, then spin.
-///
-/// `thread::sleep` routinely overshoots by a millisecond or more, which is most
-/// of the budget at 120 Hz; spinning the last stretch keeps the deadline exact
-/// without burning a core for the whole wait.
-fn spin_sleep(duration: Duration) {
-    const SPIN_FOR: Duration = Duration::from_micros(1200);
-
-    let deadline = Instant::now() + duration;
-    if let Some(coarse) = duration.checked_sub(SPIN_FOR) {
-        std::thread::sleep(coarse);
-    }
-    while Instant::now() < deadline {
-        std::hint::spin_loop();
-    }
+    pacer.deadline = Some(next);
+    pacer.sleep_until(next, &tuning);
 }
 
 #[cfg(test)]
@@ -175,10 +232,37 @@ mod tests {
     }
 
     #[test]
-    fn spin_sleep_does_not_return_early() {
-        let want = Duration::from_millis(3);
+    fn sleeping_until_a_deadline_does_not_return_early() {
+        let mut pacer = Pacer::default();
         let start = Instant::now();
-        spin_sleep(want);
-        assert!(start.elapsed() >= want, "slept {:?}", start.elapsed());
+        let deadline = start + Duration::from_millis(4);
+        pacer.sleep_until(deadline, &PaceTuning::default());
+        assert!(
+            Instant::now() >= deadline,
+            "returned {:?} early",
+            deadline - Instant::now()
+        );
+    }
+
+    #[test]
+    fn a_deadline_already_past_returns_immediately() {
+        let mut pacer = Pacer::default();
+        let start = Instant::now();
+        pacer.sleep_until(start - Duration::from_millis(5), &PaceTuning::default());
+        assert!(start.elapsed() < Duration::from_millis(2));
+    }
+
+    #[test]
+    fn the_spin_window_tracks_scheduler_overshoot() {
+        let tuning = PaceTuning::default();
+        let mut pacer = Pacer::default();
+        for _ in 0..8 {
+            pacer.sleep_until(Instant::now() + Duration::from_millis(3), &tuning);
+        }
+        // Whatever it learned, the spin window must stay inside the bounds:
+        // never so small that a late wakeup blows the deadline, never so large
+        // that the loop spins a core for the whole frame.
+        let margin = pacer.margin(&tuning);
+        assert!(margin >= tuning.min_spin && margin <= tuning.max_spin);
     }
 }

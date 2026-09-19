@@ -179,9 +179,48 @@ loop through `xrWaitFrame` and a second limiter would only fight it.
 app.insert_resource(FramePace::Hz(72.0));  // or ::Off to run unpaced
 ```
 
-Turning v-sync off in the settings menu *and* leaving pacing on was the
-smoothest combination measured (stdev 0.78 ms, zero frames over 15 ms), at the
-cost of possible tearing.
+### What is left, and why it is not the app
+
+Pacing removes the bulk of the stutter but not the last ~0.5–1% of frames,
+which still land around 19–21 ms. That residue was chased down and is **not
+application work**. Over 2000-frame captures:
+
+- CPU work per frame is p50 **1.8 ms** against an 8.34 ms budget, and of the
+  frames that overran, almost none had high CPU work.
+- **No** overrunning frame ran two physics steps.
+- Spinning the *entire* frame instead of sleeping — perfect deadline adherence,
+  a fully busy core — did not reduce drops (11–14 vs 12–25). If the deadline is
+  hit exactly and the frame still overruns, the delay is downstream of the
+  limiter, in render submit and present.
+
+Everything else tried made no difference either: release vs debug (work only
+1.8 vs 2.0 ms), present mode, `desired_maximum_frame_latency`, and windowed vs
+borderless vs exclusive fullscreen. One idea measured much *worse* and was
+reverted — skipping whole intervals to preserve phase after a late frame, 163
+spikes per 2000 against 2.
+
+What is left is the machine: this is a compositing Wayland desktop where
+`kwin_wayland` and `plasmashell` were taking ~29% CPU between them during the
+runs, alongside a browser. The compositor can preempt the app and delay a
+present, and nothing in the app can prevent that. Zero drops is not achievable
+from inside the process here. Closing the remaining gap is a system-level job:
+fewer competing clients, a compositor configured for low latency, or real-time
+scheduling priority for the process.
+
+`PaceTuning` exposes the sleep/spin trade-off if you want to experiment:
+
+```rust
+app.insert_resource(PaceTuning {
+    min_spin: Duration::from_micros(1500),  // always spin at least this long
+    max_spin: Duration::from_micros(4000),  // never burn more than this
+});
+```
+
+The adaptive spin window tracks how late `thread::sleep` has been returning and
+grows to cover it. Being honest about it: on this machine it made no measurable
+difference to the drop count, because the drops are not sleep overshoots. It is
+kept because it does hold the deadline under scheduler pressure, which is a
+different problem from the one that remains.
 
 **What was not the cause**, each ruled out by measurement rather than argument:
 the physics step costs 0.55 ms; the app's whole `First..Last` CPU work is ~2 ms

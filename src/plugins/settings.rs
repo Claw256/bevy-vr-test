@@ -13,7 +13,10 @@ use std::time::Duration;
 
 use bevy::dev_tools::fps_overlay::{FpsOverlayConfig, FpsOverlayPlugin, FrameTimeGraphConfig};
 use bevy::prelude::*;
-use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, VideoModeSelection, WindowMode};
+use bevy::window::{
+    Monitor, MonitorSelection, PresentMode, PrimaryMonitor, PrimaryWindow, VideoModeSelection,
+    WindowMode,
+};
 use bevy_mod_xr::session::{XrCreateSessionMessage, XrRequestExitMessage, XrState};
 
 /// Opens and closes the settings menu.
@@ -118,18 +121,36 @@ impl ScreenMode {
         }
     }
 
-    fn window_mode(self) -> WindowMode {
+    /// `monitor` is a concrete [`Monitor`] entity to go fullscreen on, if one
+    /// is known.
+    ///
+    /// Exclusive fullscreen needs it. Bevy resolves the monitor selection and
+    /// **panics** if it comes back empty (`bevy_winit`'s `system.rs`:
+    /// `"Could not find monitor for {selection}"`), and `MonitorSelection::Current`
+    /// resolves to nothing on Wayland, where winit reports no current monitor
+    /// for a window. Selecting the entity directly avoids that, and if no
+    /// monitor is known at all this degrades to borderless rather than killing
+    /// the app from a settings menu click.
+    fn window_mode(self, monitor: Option<Entity>) -> WindowMode {
         match self {
             Self::Windowed => WindowMode::Windowed,
             Self::BorderlessFullscreen => {
+                // Borderless tolerates an unresolved selection; only the
+                // exclusive path panics.
                 WindowMode::BorderlessFullscreen(MonitorSelection::Current)
             }
-            // `Current` keeps the desktop's resolution and refresh rate rather
-            // than switching the display to some other mode.
-            Self::ExclusiveFullscreen => WindowMode::Fullscreen(
-                MonitorSelection::Current,
-                VideoModeSelection::Current,
-            ),
+            Self::ExclusiveFullscreen => match monitor {
+                // `VideoModeSelection::Current` keeps the desktop's resolution
+                // and refresh rate rather than switching the display.
+                Some(monitor) => WindowMode::Fullscreen(
+                    MonitorSelection::Entity(monitor),
+                    VideoModeSelection::Current,
+                ),
+                None => {
+                    warn!("no monitor to go exclusive-fullscreen on; using borderless");
+                    WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+                }
+            },
         }
     }
 
@@ -364,6 +385,8 @@ fn highlight_rows(
 
 fn apply_video_settings(
     settings: Res<VideoSettings>,
+    primary_monitor: Query<Entity, (With<Monitor>, With<PrimaryMonitor>)>,
+    any_monitor: Query<Entity, With<Monitor>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     if !settings.is_changed() {
@@ -372,8 +395,10 @@ fn apply_video_settings(
     let Ok(mut window) = windows.single_mut() else {
         return;
     };
+    let monitor = primary_monitor.iter().chain(any_monitor.iter()).next();
+
     window.present_mode = settings.present_mode;
-    window.mode = settings.screen_mode.window_mode();
+    window.mode = settings.screen_mode.window_mode(monitor);
 }
 
 fn refresh_labels(
@@ -523,17 +548,29 @@ mod tests {
 
     #[test]
     fn screen_modes_map_onto_bevy_window_modes() {
+        let monitor = Some(Entity::from_raw_u32(1).unwrap());
         assert!(matches!(
-            ScreenMode::Windowed.window_mode(),
+            ScreenMode::Windowed.window_mode(monitor),
             WindowMode::Windowed
         ));
         assert!(matches!(
-            ScreenMode::BorderlessFullscreen.window_mode(),
+            ScreenMode::BorderlessFullscreen.window_mode(monitor),
             WindowMode::BorderlessFullscreen(_)
         ));
         assert!(matches!(
-            ScreenMode::ExclusiveFullscreen.window_mode(),
-            WindowMode::Fullscreen(_, _)
+            ScreenMode::ExclusiveFullscreen.window_mode(monitor),
+            WindowMode::Fullscreen(MonitorSelection::Entity(_), _)
+        ));
+    }
+
+    /// Regression: exclusive fullscreen used to pass `MonitorSelection::Current`,
+    /// which resolves to nothing on Wayland, and Bevy panics rather than
+    /// degrading — so cycling the Display row killed the app.
+    #[test]
+    fn exclusive_fullscreen_without_a_monitor_degrades_instead_of_panicking() {
+        assert!(matches!(
+            ScreenMode::ExclusiveFullscreen.window_mode(None),
+            WindowMode::BorderlessFullscreen(_)
         ));
     }
 
