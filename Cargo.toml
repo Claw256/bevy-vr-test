@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.19"
+# `bevy_dev_tools` is not a default feature; it provides the frame-time
+# overlay bound to F3. Drop it for a shipping build if you do not want the
+# dev tooling compiled in.
+bevy = { version = "0.19", features = ["bevy_dev_tools"] }
 # OpenXR backend for bevy_mod_xr. These three move in lockstep with Bevy's
 # minor version — bump them together or the dependency graph will not resolve.
 bevy_mod_openxr = "0.6"

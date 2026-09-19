@@ -30,6 +30,7 @@ ordinary desktop window if not — so you can work on it either way.
 
 - `W` `A` `S` `D`, `Q` `E` — move; hold `Shift` to go faster
 - Hold right mouse button — look around
+- `F3` — toggle the FPS readout and frame-time graph
 
 ## Running it
 
@@ -145,6 +146,23 @@ app.insert_resource(RenderQuality {
     shadow_map_size: 2048,
 });
 ```
+
+### Watching frame times in the app
+
+`F3` toggles Bevy's frame-time overlay — current FPS plus a rolling graph of
+recent frames. It is bound only in flat desktop mode, for the same reason the
+fly controls are: in the headset it would be competing with the runtime, and
+Bevy's `Node` UI does not reach the XR cameras anyway.
+
+The graph is coloured against **headset** cadence rather than monitor cadence —
+red below 72 fps, green above 90 — because the useful question while working
+flat is whether the frame would survive in a headset. Change it via
+`FpsOverlayConfig` if you want monitor thresholds.
+
+This needs Bevy's `bevy_dev_tools` feature, which `Cargo.toml` enables. It is
+not a default feature; drop it for a shipping build if you would rather not
+compile the dev tooling in. The overlay starts hidden, so it costs nothing until
+you press the key.
 
 ### Read these numbers carefully
 

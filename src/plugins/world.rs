@@ -147,7 +147,7 @@ fn spawn_overlay(mut commands: Commands) {
         children![(
             Text::new(
                 "VR: left stick moves - right stick snap-turns - squeeze to grab\n\
-                 Desktop: WASD/QE moves - hold right mouse to look",
+                 Desktop: WASD/QE moves - hold right mouse to look - F3 for frame times",
             ),
             TextFont {
                 font_size: FontSize::Px(15.0),
