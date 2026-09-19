@@ -15,6 +15,10 @@ bevy_mod_openxr = "0.6"
 bevy_mod_xr = "0.6"
 # Needed directly because action sets, paths and haptics are raw OpenXR types.
 openxr = "0.21.1"
+# Only for `DeviceType`, to classify the GPU the renderer picked. Bevy does not
+# re-export it. Must track the wgpu that Bevy pulls in — a mismatch is a compile
+# error, not a silent misread.
+wgpu-types = "29"
 
 # Compile our own code with light optimization and dependencies with full
 # optimization. Dependencies are built once; our crate is rebuilt constantly.

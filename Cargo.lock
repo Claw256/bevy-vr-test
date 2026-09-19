@@ -1868,6 +1868,7 @@ dependencies = [
  "bevy_mod_openxr",
  "bevy_mod_xr",
  "openxr",
+ "wgpu-types",
 ]
 
 [[package]]

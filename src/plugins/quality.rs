@@ -20,6 +20,7 @@
 
 use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLightShadowMap};
 use bevy::prelude::*;
+use bevy::render::renderer::RenderAdapterInfo;
 use bevy::render::view::Msaa;
 use bevy_mod_xr::camera::XrViewInit;
 use bevy_mod_xr::session::XrSessionCreated;
@@ -73,7 +74,8 @@ impl Plugin for RenderQualityPlugin {
             // `init_views`, in this schedule — so override them here, before
             // they render a frame, as well as in `Update` for the flat camera.
             .add_systems(XrSessionCreated, apply_msaa.after(XrViewInit))
-            .add_systems(Update, apply_msaa);
+            .add_systems(Update, apply_msaa)
+            .add_systems(Startup, report_adapter);
     }
 }
 
@@ -86,6 +88,40 @@ fn apply_msaa(
         if *msaa != quality.msaa {
             debug!("{entity}: MSAA {:?} -> {:?}", *msaa, quality.msaa);
             *msaa = quality.msaa;
+        }
+    }
+}
+
+/// Says which GPU the renderer actually picked, and complains if it is not a
+/// discrete one.
+///
+/// On a hybrid laptop this is easy to get wrong and hard to notice: the app
+/// runs, just on the integrated GPU. An iGPU will not hold headset cadence, so
+/// it is worth a warning rather than a line buried in the startup log.
+///
+/// Note that `WgpuSettings` set in code will not change this. `add_xr_plugins`
+/// disables Bevy's `RenderPlugin` and the OpenXR backend re-adds it with
+/// `RenderPlugin::default()`, discarding anything configured here. The
+/// environment variables `WGPU_ADAPTER_NAME`, `WGPU_BACKEND` and
+/// `WGPU_POWER_PREF` still apply, because `WgpuSettings::default()` reads them.
+fn report_adapter(adapter: Option<Res<RenderAdapterInfo>>) {
+    let Some(adapter) = adapter else {
+        return;
+    };
+
+    let name = &adapter.name;
+    let backend = adapter.backend;
+
+    match adapter.device_type {
+        wgpu_types::DeviceType::DiscreteGpu => {
+            info!("rendering on {name} ({backend:?})");
+        }
+        other => {
+            warn!(
+                "rendering on {name} ({backend:?}, {other:?}) - not a discrete GPU. \
+                 On a hybrid laptop, set WGPU_ADAPTER_NAME to part of the name of \
+                 the GPU you want, or launch through scripts/run-nvidia.sh.",
+            );
         }
     }
 }

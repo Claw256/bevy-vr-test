@@ -193,7 +193,9 @@ until you switch it on.
 ### Read these numbers carefully
 
 They were measured on an Intel HD Graphics 530 integrated GPU, rendering **one**
-1920x1080 view, with **no headset attached**. A VR frame is two views at roughly
+1920x1080 view, with **no headset attached**. That was before the machine's
+discrete GPU was available — re-run the probe if you are now on a dGPU, because
+these numbers will be pessimistic by a wide margin. A VR frame is two views at roughly
 twice that resolution each, on a very different GPU. The *ranking* of the levers
 should carry over, because both MSAA and shadow sampling scale with pixels times
 views. The *magnitudes* will not. Re-measure on your target hardware.
@@ -291,6 +293,40 @@ regenerate the lockfile and hit that error:
 ```bash
 cargo update -p encase --precise 0.12.1
 ```
+
+## Which GPU it runs on
+
+The app logs the adapter it picked at startup, and warns if it is not a
+discrete GPU:
+
+```
+INFO rendering on NVIDIA GeForce GTX 960M (Vulkan)
+WARN rendering on Intel(R) HD Graphics 530 (Vulkan, IntegratedGpu) - not a discrete GPU. ...
+```
+
+Bevy already asks wgpu for `PowerPreference::HighPerformance`, so on a hybrid
+laptop the discrete GPU is chosen **as long as it is visible to Vulkan**. Check
+that first — `vulkaninfo --summary | grep deviceName` should list it. If only
+the integrated GPU appears, the problem is the driver or the hybrid-graphics
+mode, not the app.
+
+To force the choice:
+
+```bash
+scripts/run-nvidia.sh --release      # PRIME offload + WGPU_ADAPTER_NAME
+WGPU_ADAPTER_NAME=NVIDIA cargo run   # or just name the adapter
+```
+
+> **`WgpuSettings` set in code will not work here.** `add_xr_plugins` disables
+> Bevy's `RenderPlugin`, and the OpenXR backend re-adds it as
+> `RenderPlugin::default()` (`bevy_mod_openxr/src/openxr/init.rs`), discarding
+> whatever you configured. The environment variables `WGPU_ADAPTER_NAME`,
+> `WGPU_BACKEND` and `WGPU_POWER_PREF` still apply, because
+> `WgpuSettings::default()` reads them.
+
+On an Optimus laptop, note that `optimus-manager` is an Xorg-era tool and does
+nothing useful under a Wayland session — if it has left the machine in
+`integrated` mode, the NVIDIA GPU may not be loaded at all.
 
 ## Build settings
 
